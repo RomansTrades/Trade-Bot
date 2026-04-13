@@ -1,6 +1,6 @@
 # app.py
 import streamlit as st
-import ccxt
+import yfinance as yf
 import pandas as pd
 import numpy as np
 import time
@@ -19,11 +19,36 @@ timeframe = st.selectbox("Timeframe", ["5m","15m","1h","4h"])
 @st.cache_data
 def get_data(symbol, timeframe):
     try:
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=500)
-        df = pd.DataFrame(ohlcv, columns=['time','open','high','low','close','volume'])
+        # Convert symbol (BTC/USDT → BTC-USD)
+        symbol = symbol.replace("/USDT", "-USD")
+
+        interval_map = {
+            "5m": "5m",
+            "15m": "15m",
+            "1h": "1h",
+            "4h": "1h"  # fallback (Yahoo limitation)
+        }
+
+        df = yf.download(
+            tickers=symbol,
+            period="7d",
+            interval=interval_map[timeframe]
+        )
+
+        df = df.rename(columns={
+            "Open": "open",
+            "High": "high",
+            "Low": "low",
+            "Close": "close",
+            "Volume": "volume"
+        })
+
+        df = df.reset_index()
+
         return df
+
     except Exception as e:
-        st.warning(f"⚠️ Error fetching {symbol}: {e}")
+        st.warning(f"Data error: {e}")
         return pd.DataFrame()  
 
 
