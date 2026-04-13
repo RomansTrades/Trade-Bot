@@ -15,9 +15,13 @@ timeframe = st.selectbox("Timeframe", ["5m","15m","1h","4h"])
 
 @st.cache_data
 def get_data(symbol, timeframe):
-    ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=500)
-    df = pd.DataFrame(ohlcv, columns=['time','open','high','low','close','volume'])
-    return df
+    try:
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=500)
+        df = pd.DataFrame(ohlcv, columns=['time','open','high','low','close','volume'])
+        return df
+    except Exception as e:
+        st.warning(f"⚠️ Error fetching {symbol}: {e}")
+        return pd.DataFrame()  
 
 
 def add_indicators(df):
