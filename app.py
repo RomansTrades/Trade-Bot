@@ -3,12 +3,15 @@ import streamlit as st
 import ccxt
 import pandas as pd
 import numpy as np
+import time
 
 st.set_page_config(page_title="Trade Bot PRO MAX", layout="wide")
 
 st.title("🚀 Trade Bot PRO MAX - Institutional System")
 
-exchange = ccxt.binance()
+exchange = ccxt.binance({
+    'enableRateLimit': True,
+})
 
 symbols = ["BTC/USDT","ETH/USDT","SOL/USDT","BNB/USDT","XRP/USDT"]
 timeframe = st.selectbox("Timeframe", ["5m","15m","1h","4h"])
@@ -147,9 +150,11 @@ results = []
 
 for sym in symbols:
     df = get_data(sym, timeframe)
+
+    if df.empty:
+        continue  # skip if API failed
+
     df = add_indicators(df)
-    signal = generate_signal(df, sym)
-    price, sl, tp, rr = risk(df)
 
     results.append({
         "Pair": sym,
