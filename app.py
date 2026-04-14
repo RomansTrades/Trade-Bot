@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -9,30 +8,19 @@ st.set_page_config(page_title="Trade Bot PRO MAX", layout="wide")
 
 st.title("🚀 Trade Bot PRO MAX - Institutional System")
 
-exchange = ccxt.binance({
-    'enableRateLimit': True,
-})
+symbols = ["BTC-USD","ETH-USD","SOL-USD","BNB-USD","XRP-USD"]
+timeframe = st.selectbox("Timeframe", ["5m","15m","1h"])
 
-symbols = ["BTC/USDT","ETH/USDT","SOL/USDT","BNB/USDT","XRP/USDT"]
-timeframe = st.selectbox("Timeframe", ["5m","15m","1h","4h"])
-
+# =========================
+# DATA FETCH
+# =========================
 @st.cache_data
 def get_data(symbol, timeframe):
     try:
-        # Convert symbol (BTC/USDT → BTC-USD)
-        symbol = symbol.replace("/USDT", "-USD")
-
-        interval_map = {
-            "5m": "5m",
-            "15m": "15m",
-            "1h": "1h",
-            "4h": "1h"  # fallback (Yahoo limitation)
-        }
-
         df = yf.download(
             tickers=symbol,
             period="7d",
-            interval=interval_map[timeframe]
+            interval=timeframe
         )
 
         df = df.rename(columns={
@@ -44,14 +32,15 @@ def get_data(symbol, timeframe):
         })
 
         df = df.reset_index()
-
         return df
 
     except Exception as e:
         st.warning(f"Data error: {e}")
-        return pd.DataFrame()  
+        return pd.DataFrame()
 
-
+# =========================
+# INDICATORS
+# =========================
 def add_indicators(df):
     df['ema50'] = df['close'].ewm(span=50).mean()
     df['ema200'] = df['close'].ewm(span=200).mean()
@@ -69,7 +58,8 @@ def add_indicators(df):
 
     df['tr'] = np.maximum(
         df['high'] - df['low'],
-        np.maximum(abs(df['high'] - df['close'].shift()), abs(df['low'] - df['close'].shift()))
+        np.maximum(abs(df['high'] - df['close'].shift()),
+                   abs(df['low'] - df['close'].shift()))
     )
     df['atr'] = df['tr'].rolling(14).mean()
 
@@ -77,7 +67,9 @@ def add_indicators(df):
 
     return df
 
-
+# =========================
+# SMART MONEY LOGIC
+# =========================
 def detect_liquidity(df):
     df['prev_high'] = df['high'].rolling(5).max().shift(1)
     df['prev_low'] = df['low'].rolling(5).min().shift(1)
@@ -89,7 +81,6 @@ def detect_liquidity(df):
         return "bullish_sweep"
     return None
 
-
 def detect_order_block(df):
     candle = df.iloc[-3]
     if candle['close'] < candle['open']:
@@ -98,15 +89,7 @@ def detect_order_block(df):
         return "bullish_ob"
     return None
 
-
-def multi_timeframe_trend(symbol):
-    df_htf = get_data(symbol, "4h")
-    df_htf['ema200'] = df_htf['close'].ewm(span=200).mean()
-    last = df_htf.iloc[-1]
-    return "bullish" if last['close'] > last['ema200'] else "bearish"
-
-
-def detect_break_of_structure(df):
+def detect_bos(df):
     highs = df['high'].rolling(10).max()
     lows = df['low'].rolling(10).min()
     last = df.iloc[-1]
@@ -117,17 +100,18 @@ def detect_break_of_structure(df):
         return "bearish_bos"
     return None
 
-
 def volume_strength(df):
     return df.iloc[-1]['volume'] > df['volume'].rolling(30).mean().iloc[-1]
 
-
-def generate_signal(df, symbol):
+# =========================
+# SIGNAL ENGINE
+# =========================
+def generate_signal(df):
     last = df.iloc[-1]
-    trend_htf = multi_timeframe_trend(symbol)
+
     sweep = detect_liquidity(df)
     ob = detect_order_block(df)
-    bos = detect_break_of_structure(df)
+    bos = detect_bos(df)
 
     score = 0
 
@@ -149,16 +133,17 @@ def generate_signal(df, symbol):
     if bos == "bullish_bos":
         score += 1
 
-    # ELITE CONDITIONS
-    if sweep == "bullish_sweep" and trend_htf == "bullish" and ob == "bullish_ob" and score >= 5:
+    if sweep == "bullish_sweep" and ob == "bullish_ob" and score >= 5:
         return "🚀 ULTRA ELITE LONG"
 
-    if sweep == "bearish_sweep" and trend_htf == "bearish" and ob == "bearish_ob" and score >= 5:
+    if sweep == "bearish_sweep" and ob == "bearish_ob" and score >= 5:
         return "🚀 ULTRA ELITE SHORT"
 
     return "❌ NO TRADE"
 
-
+# =========================
+# RISK
+# =========================
 def risk(df):
     last = df.iloc[-1]
     price = last['close']
@@ -167,53 +152,61 @@ def risk(df):
     sl = price - (2 * atr)
     tp = price + (4 * atr)
     rr = (tp - price) / (price - sl)
+
     return price, sl, tp, rr
 
+# =========================
+# SCANNER
+# =========================
+st.subheader("🔍 Multi-Coin Scanner")
 
-st.write("## 🔍 Multi-Coin Scanner")
 results = []
 
 for sym in symbols:
     df = get_data(sym, timeframe)
 
-    if df.empty:
-        continue  # skip if API failed
+    if df.empty or 'close' not in df.columns:
+        continue
 
     df = add_indicators(df)
+
+    signal = generate_signal(df)
+    price, sl, tp, rr = risk(df)
 
     results.append({
         "Pair": sym,
         "Signal": signal,
-        "Price": round(price,2),
-        "RR": round(rr,2)
+        "Price": round(price, 2),
+        "RR": round(rr, 2)
     })
+
+    time.sleep(0.2)
 
 scan_df = pd.DataFrame(results)
 st.dataframe(scan_df)
 
-st.write("## 📊 Selected Chart")
-selected = st.selectbox("Pick Pair", symbols)
+# =========================
+# SINGLE CHART
+# =========================
+st.subheader("📊 Chart")
+
+selected = st.selectbox("Select Pair", symbols)
 
 df = get_data(selected, timeframe)
-df = add_indicators(df)
 
-price, sl, tp, rr = risk(df)
-signal = generate_signal(df, selected)
+if not df.empty and 'close' in df.columns:
+    df = add_indicators(df)
 
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Price", round(price,2))
-col2.metric("Signal", signal)
-col3.metric("Stop Loss", round(sl,2))
-col4.metric("RR", round(rr,2))
+    price, sl, tp, rr = risk(df)
+    signal = generate_signal(df)
 
-st.line_chart(df[['close','ema50','ema200']])
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Price", round(price,2))
+    col2.metric("Signal", signal)
+    col3.metric("Stop Loss", round(sl,2))
+    col4.metric("RR", round(rr,2))
 
-st.write("## 📉 Data")
-st.dataframe(df.tail(20))
-
-
-# requirements.txt
-# streamlit
-# ccxt
-# pandas
-# numpy
+    st.line_chart(df[['close','ema50','ema200']])
+    st.dataframe(df.tail(20))
+else:
+    st.warning("No data available")
