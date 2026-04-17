@@ -1,5 +1,1 @@
-streamlit==1.33.0
-pandas==2.2.2
-numpy==1.26.4
-ccxt==4.3.88
-requests==2.31.0
+pip install streamlit openai pillow python-dotenv
