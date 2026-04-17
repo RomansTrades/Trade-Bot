@@ -1,381 +1,243 @@
-# ==========================================
-# ULTIMATE TRADE INTELLIGENCE SYSTEM (V4)
-# Full System - Single File
-# ==========================================
-
 import streamlit as st
-import pandas as pd
-import numpy as np
+from PIL import Image
+import base64
+import os
+import io
+from dotenv import load_dotenv
+from openai import OpenAI
+
 import ccxt
-import sys
-import requests
-import datetime
+import pandas as pd
+import ta
 
 # ==============================
-# CONFIG
+# LOAD ENV
 # ==============================
-TIMEFRAMES = ['5m','15m','1h','4h','1d']
-SYMBOLS = ['BTC/USDT','ETH/USDT','SOL/USDT','XRP/USDT']
-
-exchange = ccxt.binance()
+load_dotenv()
+client = OpenAI(api_key=os.getenv("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"))
 
 # ==============================
-# DATA FETCH
+# PAGE CONFIG
 # ==============================
-def fetch_data(symbol, timeframe):
-    try:
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=300)
-        df = pd.DataFrame(ohlcv, columns=['time','open','high','low','close','volume'])
-        return df
-    except:
-        return None
+st.set_page_config(page_title="AI Trade Analyst PRO", layout="wide")
+st.title("🧠 AI Trade Analyst PRO (Multi-Timeframe Engine)")
 
 # ==============================
-# ORDER FLOW
+# SIDEBAR
 # ==============================
-def order_flow(symbol):
-    try:
-        ob = exchange.fetch_order_book(symbol)
-        bids = sum([b[1] for b in ob['bids'][:10]])
-        asks = sum([a[1] for a in ob['asks'][:10]])
+st.sidebar.header("⚙️ Settings")
 
-        if bids > asks * 1.2:
-            return "Buy Pressure", 1
-        elif asks > bids * 1.2:
-            return "Sell Pressure", -1
-        return "Neutral", 0
-    except:
-        return "No Data", 0
+model = st.sidebar.selectbox("Model", ["gpt-5.0", "gpt-4o"])
+symbol = st.sidebar.text_input("Symbol", "BTC/USDT")
 
 # ==============================
-# INDICATORS
+# USER INPUT
 # ==============================
-def indicators(df):
-    df['ema_50'] = df['close'].ewm(span=50).mean()
-    df['ema_200'] = df['close'].ewm(span=200).mean()
+uploaded_file = st.file_uploader("📈 Upload Chart (Optional)", type=["png","jpg","jpeg"])
 
-    delta = df['close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    df['rsi'] = 100 - (100 / (1 + rs))
+user_thoughts = st.text_area(
+    "💭 Your Trade Idea",
+    placeholder="Explain your setup..."
+)
 
-    score = 0
-    notes = []
-
-    if df['rsi'].iloc[-1] < 30:
-        score += 1
-        notes.append("RSI Oversold")
-    elif df['rsi'].iloc[-1] > 70:
-        score -= 1
-        notes.append("RSI Overbought")
-
-    if df['close'].iloc[-1] > df['ema_200'].iloc[-1]:
-        score += 1
-    else:
-        score -= 1
-
-    return score, notes
+analyze_btn = st.button("🚀 Run Analysis")
 
 # ==============================
-# PRICE ACTION
+# IMAGE ENCODER
 # ==============================
-def price_action(df):
-    highs = df['high']
-    lows = df['low']
-
-    recent_high = highs.iloc[-10:-1].max()
-    recent_low = lows.iloc[-10:-1].min()
-
-    if highs.iloc[-1] > recent_high:
-        return "Bullish BOS", 2
-    elif lows.iloc[-1] < recent_low:
-        return "Bearish BOS", -2
-
-    return "Range", 0
+def encode_image(image):
+    buffer = io.BytesIO()
+    image.convert("RGB").save(buffer, format="JPEG")
+    return base64.b64encode(buffer.getvalue()).decode()
 
 # ==============================
-# STRUCTURE CONTEXT
+# MULTI-TIMEFRAME ENGINE
 # ==============================
-def structure_context(df):
-    highs = df['high']
-    lows = df['low']
+def get_mtf_data(symbol):
+    exchange = ccxt.binance()
 
-    if highs.iloc[-1] > highs.iloc[-5] and lows.iloc[-1] > lows.iloc[-5]:
-        return "Uptrend", 2
-    elif highs.iloc[-1] < highs.iloc[-5] and lows.iloc[-1] < lows.iloc[-5]:
-        return "Downtrend", -2
+    timeframes = {
+        "5m": 1,
+        "15m": 2,
+        "1h": 3,
+        "4h": 4,
+        "1d": 5
+    }
 
-    return "Range", 0
+    results = {}
 
-# ==============================
-# LIQUIDITY
-# ==============================
-def liquidity(df):
-    eq_highs = abs(df['high'] - df['high'].shift(1)) < 0.1
-    eq_lows = abs(df['low'] - df['low'].shift(1)) < 0.1
+    for tf, weight in timeframes.items():
+        try:
+            ohlcv = exchange.fetch_ohlcv(symbol, tf, limit=200)
+            df = pd.DataFrame(ohlcv, columns=["time","open","high","low","close","volume"])
 
-    if eq_highs.tail(5).any():
-        return "Liquidity Above", -2
-    elif eq_lows.tail(5).any():
-        return "Liquidity Below", 2
+            # Indicators
+            df["rsi"] = ta.momentum.RSIIndicator(df["close"]).rsi()
 
-    return "Neutral", 0
+            macd = ta.trend.MACD(df["close"])
+            df["macd"] = macd.macd()
+            df["macd_signal"] = macd.macd_signal()
 
-# ==============================
-# VOLUME
-# ==============================
-def volume(df):
-    avg = df['volume'].rolling(20).mean()
+            df["ema50"] = ta.trend.EMAIndicator(df["close"], window=50).ema_indicator()
+            df["ema200"] = ta.trend.EMAIndicator(df["close"], window=200).ema_indicator()
 
-    if df['volume'].iloc[-1] > avg.iloc[-1] * 1.5:
-        return "Volume Spike", 1
-    elif df['volume'].iloc[-1] < avg.iloc[-1] * 0.7:
-        return "Weak Volume", -1
+            latest = df.iloc[-1]
 
-    return "Normal Volume", 0
+            score = 0
 
-# ==============================
-# VWAP
-# ==============================
-def vwap(df):
-    cum_vol = df['volume'].cumsum()
-    cum_vol_price = (df['close'] * df['volume']).cumsum()
-    df['vwap'] = cum_vol_price / cum_vol
+            # Trend
+            if latest["ema50"] > latest["ema200"]:
+                score += 25
+                trend = "Bullish"
+            else:
+                score -= 25
+                trend = "Bearish"
 
-    if df['close'].iloc[-1] > df['vwap'].iloc[-1]:
-        return "Above VWAP", 1
-    return "Below VWAP", -1
+            # RSI
+            if latest["rsi"] > 55:
+                score += 15
+            elif latest["rsi"] < 45:
+                score -= 15
 
-# ==============================
-# FVG
-# ==============================
-def fvg(df):
-    for i in range(-5, -1):
-        if df['low'].iloc[i] > df['high'].iloc[i-2]:
-            return "Bullish FVG", 2
-        elif df['high'].iloc[i] < df['low'].iloc[i-2]:
-            return "Bearish FVG", -2
-    return "No FVG", 0
+            # MACD
+            if latest["macd"] > latest["macd_signal"]:
+                score += 15
+            else:
+                score -= 15
 
-# ==============================
-# ORDER BLOCK
-# ==============================
-def order_block(df):
-    candle = df.iloc[-2]
+            # Volume
+            vol_mean = df["volume"].rolling(20).mean().iloc[-1]
+            if latest["volume"] > vol_mean:
+                score += 10
 
-    if candle['close'] < candle['open']:
-        return "Bullish OB", 1
-    elif candle['close'] > candle['open']:
-        return "Bearish OB", -1
+            results[tf] = {
+                "score": score,
+                "weight": weight,
+                "trend": trend,
+                "price": float(latest["close"]),
+                "rsi": float(latest["rsi"])
+            }
 
-    return "None", 0
+        except Exception as e:
+            results[tf] = {"error": str(e)}
+
+    return results
 
 # ==============================
-# OPEN INTEREST + FUNDING
+# FINAL SCORE
 # ==============================
-def open_interest(symbol):
-    try:
-        sym = symbol.replace("/", "")
-        data = requests.get(f"https://fapi.binance.com/fapi/v1/openInterest?symbol={sym}").json()
-        return "OI Rising", 1
-    except:
-        return "OI Error", 0
+def calculate_final_score(mtf_data):
+    total = 0
+    max_score = 0
 
-def funding_rate(symbol):
-    try:
-        sym = symbol.replace("/", "")
-        data = requests.get(f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={sym}").json()
-        funding = float(data['lastFundingRate'])
+    for tf in mtf_data:
+        if "error" in mtf_data[tf]:
+            continue
 
-        if funding > 0.01:
-            return "Longs Overcrowded", -1
-        elif funding < -0.01:
-            return "Shorts Overcrowded", 1
+        weight = mtf_data[tf]["weight"]
+        score = mtf_data[tf]["score"]
 
-        return "Neutral Funding", 0
-    except:
-        return "Funding Error", 0
+        total += score * weight
+        max_score += 50 * weight
 
-# ==============================
-# LIQUIDATION PROXY
-# ==============================
-def liquidation_proxy(df):
-    move = abs(df['close'].iloc[-1] - df['close'].iloc[-5])
-    if move > df['close'].std() * 1.5:
-        return "Liquidation Event", 2
-    return "None", 0
+    if max_score == 0:
+        return 0
 
-# ==============================
-# SESSION
-# ==============================
-def session():
-    h = datetime.datetime.utcnow().hour
-    if h < 8:
-        return "Asia", 0
-    elif h < 16:
-        return "London", 1
-    return "New York", 1
-
-# ==============================
-# MARKET FILTER
-# ==============================
-def market_filter(df):
-    if df['close'].std() < 15:
-        return False
-    if df['volume'].mean() < 10:
-        return False
-    return True
-
-# ==============================
-# TRADE SETUP
-# ==============================
-def trade_setup(df, bias):
-    high = df['high'].iloc[-20:].max()
-    low = df['low'].iloc[-20:].min()
-
-    if bias == "LONG":
-        return low, low*0.98, high
-    elif bias == "SHORT":
-        return high, high*1.02, low
-
-    return 0,0,0
-
-# ==============================
-# RISK REWARD
-# ==============================
-def risk_reward(entry, sl, tp):
-    risk = abs(entry - sl)
-    reward = abs(tp - entry)
-    if risk == 0:
-        return "Invalid", 0
-    rr = reward / risk
-    if rr >= 2:
-        return f"Good RR {round(rr,2)}", 2
-    return f"Bad RR {round(rr,2)}", -2
+    return round((total / max_score) * 100, 2)
 
 # ==============================
 # ANALYSIS
 # ==============================
-def analyze(symbol):
-    results = {}
-    reasons = []
+if analyze_btn:
 
-    for tf in TIMEFRAMES:
-        df = fetch_data(symbol, tf)
-        if df is None or not market_filter(df):
-            continue
+    with st.spinner("Running multi-timeframe analysis..."):
 
-        pa, pa_s = price_action(df)
-        trend, trend_s = structure_context(df)
-        liq, liq_s = liquidity(df)
-        vol, vol_s = volume(df)
-        ind_s, ind_notes = indicators(df)
-        of, of_s = order_flow(symbol)
-        oi, oi_s = open_interest(symbol)
-        fund, fund_s = funding_rate(symbol)
-        vwap_sig, vwap_s = vwap(df)
-        fvg_sig, fvg_s = fvg(df)
-        ob_sig, ob_s = order_block(df)
+        mtf_data = get_mtf_data(symbol)
+        final_score = calculate_final_score(mtf_data)
 
-        score = (
-            pa_s*3 + trend_s*2 + liq_s*3 + vol_s*2 +
-            ind_s + of_s*2 + oi_s*2 + fund_s*2 +
-            vwap_s*2 + fvg_s*3 + ob_s*2
+    # ==============================
+    # DISPLAY DATA
+    # ==============================
+    st.subheader("📊 Multi-Timeframe Breakdown")
+
+    for tf in mtf_data:
+        if "error" in mtf_data[tf]:
+            st.write(f"{tf}: ERROR")
+        else:
+            data = mtf_data[tf]
+            st.write(f"{tf} → Score: {data['score']} | Trend: {data['trend']} | RSI: {round(data['rsi'],2)}")
+
+    st.metric("🔥 Final Confluence Score", f"{final_score}/100")
+
+    # ==============================
+    # AI INTERPRETATION (CONTROLLED)
+    # ==============================
+    image_part = None
+
+    if uploaded_file:
+        image = Image.open(uploaded_file)
+        st.image(image, caption="Uploaded Chart", use_container_width=True)
+        image_part = {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{encode_image(image)}"}
+        }
+
+    with st.spinner("Generating professional analysis..."):
+
+        prompt = f"""
+You are a quantitative trading analyst.
+
+STRICT RULES:
+- Do NOT guess from the chart
+- Use ONLY structured data
+- Be conservative
+- If unclear → NO TRADE
+
+DATA:
+{mtf_data}
+
+FINAL SCORE: {final_score}
+
+USER IDEA:
+{user_thoughts}
+
+LOGIC:
+- >65 = Strong bias
+- 55–65 = Weak bias
+- <55 = No trade
+
+OUTPUT:
+
+1. Bias (Bullish / Bearish / Neutral)
+2. Timeframe alignment summary
+3. Trade decision (TAKE / NO TRADE)
+4. If TAKE:
+   - Entry
+   - Stop Loss
+   - Take Profit
+   - Reason
+5. Risks
+6. What could invalidate this
+"""
+
+        message_content = [{"type": "text", "text": prompt}]
+
+        if image_part:
+            message_content.append(image_part)
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": message_content}],
+            max_tokens=800
         )
 
-        results[tf] = {"score": score, "price": df['close'].iloc[-1]}
+        output = response.choices[0].message.content
 
-        reasons += [pa, trend, liq, vol, of, oi, fund, vwap_sig, fvg_sig, ob_sig] + ind_notes
-
-    return results, list(set(reasons))
-
-# ==============================
-# BIAS
-# ==============================
-def get_bias(results):
-    try:
-        htf = results['4h']['score'] + results['1d']['score']
-        ltf = results['5m']['score'] + results['15m']['score']
-
-        if htf > 0 and ltf > 0:
-            return "LONG"
-        elif htf < 0 and ltf < 0:
-            return "SHORT"
-        return "NO TRADE"
-    except:
-        return "NO DATA"
+    st.markdown("### 🧠 AI Decision")
+    st.write(output)
 
 # ==============================
-# OUTPUT
+# FOOTER
 # ==============================
-def print_output(symbol, results, reasons):
-    bias = get_bias(results)
-    total = sum([results[x]['score'] for x in results])
-    confidence = min(100, abs(total)*3)
-
-    df = fetch_data(symbol, '15m')
-    entry, sl, tp = trade_setup(df, bias)
-    rr_text, _ = risk_reward(entry, sl, tp)
-
-    if confidence < 50:
-        print("NO TRADE CONDITIONS")
-        return
-
-    print("="*30)
-    print(" BLACK TERMINAL ANALYSIS ")
-    print("="*30)
-    print(f"Asset: {symbol}")
-    print(f"Bias: {bias}")
-    print(f"Confidence: {confidence}%")
-
-    print("\nKEY FACTORS:")
-    for r in reasons[:6]:
-        print(f"• {r}")
-
-    print("\nTRADE:")
-    print(f"Entry: {round(entry,2)}")
-    print(f"SL: {round(sl,2)}")
-    print(f"TP: {round(tp,2)}")
-    print(f"{rr_text}")
-
-# ==============================
-# SCAN
-# ==============================
-def scan_all():
-    ranking = []
-
-    for sym in SYMBOLS:
-        res, _ = analyze(sym)
-        score = sum([res[x]['score'] for x in res]) if res else 0
-        ranking.append((sym, score))
-
-    return sorted(ranking, key=lambda x: x[1], reverse=True)[:3]
-
-# ==============================
-# STREAMLIT
-# ==============================
-st.title("Black Terminal V4")
-
-symbol = st.text_input("Symbol", "BTC/USDT")
-
-if st.button("Analyze"):
-    res, reasons = analyze(symbol)
-    st.write(res)
-    st.write(reasons)
-
-if st.button("Scan"):
-    st.write(scan_all())
-
-# ==============================
-# TERMINAL
-# ==============================
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        arg = sys.argv[1]
-
-        if arg.upper() == "ALL":
-            print(scan_all())
-        else:
-            res, reasons = analyze(arg)
-            print_output(arg, res, reasons)
+st.markdown("---")
+st.caption("Multi-Timeframe Quant Engine | Data > Opinions")
