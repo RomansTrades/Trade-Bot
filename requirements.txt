@@ -1,1 +1,1 @@
-pip install streamlit openai pillow python-dotenv
+pip install streamlit openai pillow python-dotenv ccxt pandas ta
