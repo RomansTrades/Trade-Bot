@@ -1,1 +1,53 @@
-pip install streamlit openai pillow python-dotenv ccxt pandas ta
+# =========================
+# CORE
+# =========================
+pandas==2.2.2
+numpy==1.26.4
+
+# =========================
+# API / NETWORK
+# =========================
+requests==2.32.3
+
+# =========================
+# TECHNICAL ANALYSIS
+# =========================
+ta==0.11.0
+
+# =========================
+# STATS / MATH
+# =========================
+scipy==1.13.1
+
+# =========================
+# VISUALIZATION (BACKTESTING)
+# =========================
+matplotlib==3.9.0
+seaborn==0.13.2
+
+# =========================
+# MACHINE LEARNING (FUTURE EDGE)
+# =========================
+scikit-learn==1.5.1
+joblib==1.4.2
+
+# =========================
+# PERFORMANCE / SPEED
+# =========================
+numba==0.60.0
+
+# =========================
+# FILE HANDLING / UTILITIES
+# =========================
+python-dateutil==2.9.0.post0
+pytz==2024.1
+
+# =========================
+# OPTIONAL DASHBOARD (if you expand)
+# =========================
+streamlit==1.37.0
+
+# =========================
+# OPTIONAL DATA SOURCES (if you expand later)
+# =========================
+ccxt==4.3.67
